@@ -13,7 +13,7 @@ import IndicatorService, {
   CategoryInfo,
   IndicatorsByTypeAPIResponse
 } from '../services/IndicatorService';
-import { IndicatorData } from './IndicatorCard';
+import { IndicatorData, TimeSeriesPoint } from './IndicatorCard';
 // import { useIndicators } from '../context/IndicatorContext'; // setIndicator is commented out
 import CategoryHeader from './CategoryHeader';
 import CategoryNavigation, { Category as NavCategory } from './CategoryNavigation';
@@ -37,6 +37,7 @@ const convertToIndicatorData = (apiResponse: EnrichedIndicatorAPIResponse): Indi
     signalStatus: apiResponse.signal_status,
     yAxisDomain: apiResponse.y_axis_domain,
     description: apiResponse.description,
+    ma_series_data: apiResponse.ma_series_data, // <<< ADD THIS LINE
   };
 };
 
@@ -55,6 +56,7 @@ interface EnrichedIndicatorAPIResponse {
   last_value?: number;
   last_updated?: string;
   y_axis_domain?: [number, number];
+  ma_series_data?: TimeSeriesPoint[]; // This field is present in the API response type
 }
 
 interface DateRangeConfigProp {
