@@ -33,7 +33,7 @@ from app.models.indicators import (
 logger = logging.getLogger(__name__)
 
 class UnifiedIndicatorService:
-    """Unified service for fetching, processing, and enriching indicator data with ordering."""
+    """Unified service for fetching, processing, and enriching indicator data with MA buffer handling."""
 
     def __init__(self):
         self.fred_service = FredService()
@@ -47,7 +47,7 @@ class UnifiedIndicatorService:
         start_date: Optional[str],
         transformation: TransformationType
     ) -> Optional[str]:
-        # This function should correctly return the original start_date if transformation is not YOY
+        # This function correctly returns the original start_date if transformation is not YOY
         # or if start_date is None initially.
         if not start_date or transformation != TransformationType.YOY:
             return start_date
@@ -59,13 +59,48 @@ class UnifiedIndicatorService:
             logger.warning(f"Invalid start_date format: {start_date}")
             return start_date
 
+    def _get_fetch_dates_for_indicator(
+        self,
+        indicator_id: str,
+        start_date: Optional[str],
+        end_date: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Calculate the actual start/end dates to use for fetching, considering:
+        1. YoY transformation requirements
+        2. Moving average buffer requirements
+        
+        Returns:
+            Tuple of (fetch_start_date, fetch_end_date, original_start_date)
+        """
+        metadata = get_indicator_metadata(indicator_id)
+        if not metadata:
+            return start_date, end_date, start_date
+
+        original_start_date = start_date
+        
+        # First, adjust for YoY transformation if needed
+        transformation_adjusted_start = self._adjust_start_date_for_transformation(
+            start_date, metadata.transformation
+        )
+        
+        # Then, adjust for MA buffer if needed
+        ma_buffer_days = IndicatorProcessingService.get_ma_buffer_days(metadata)
+        final_fetch_start = IndicatorProcessingService.adjust_start_date_for_ma_buffer(
+            transformation_adjusted_start, ma_buffer_days
+        )
+        
+        logger.info(f"[{indicator_id}] Date calculations: original='{original_start_date}' -> transformation_adjusted='{transformation_adjusted_start}' -> final_fetch='{final_fetch_start}' (buffer_days={ma_buffer_days})")
+        
+        return final_fetch_start, end_date, original_start_date
+
     def _fetch_raw_data(
         self,
         indicator_id: str,
-        start_date: Optional[str] = None, # Parameter received from get_indicator
-        end_date: Optional[str] = None   # Parameter received from get_indicator
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Tuple[List[TimeSeriesPoint], str, Optional[str], Optional[str]]:
-        # --- ADDED DEBUG LOG ---
+        
         logger.info(f"[_fetch_raw_data for {indicator_id}] Received params -> start_date: '{start_date}', end_date: '{end_date}'")
         
         metadata = get_indicator_metadata(indicator_id)
@@ -73,13 +108,12 @@ class UnifiedIndicatorService:
             logger.error(f"Metadata not found for indicator_id '{indicator_id}' during raw data fetch.")
             return [], f"Unknown Indicator: {indicator_id}", None, None
 
-        # This is where adjusted_start_date is calculated
-        adjusted_start_date = self._adjust_start_date_for_transformation(
-            start_date, metadata.transformation
+        # Calculate the actual dates to fetch (including buffers)
+        fetch_start_date, fetch_end_date, original_start_date = self._get_fetch_dates_for_indicator(
+            indicator_id, start_date, end_date
         )
-        # The user's log showed this was None for SP500, implying 'start_date' input to _adjust_start_date_for_transformation was None
-        logger.info(f"[_fetch_raw_data for {indicator_id}] Calculated adjusted_start_date: '{adjusted_start_date}' (original start_date was '{start_date}')")
-
+        
+        logger.info(f"[_fetch_raw_data for {indicator_id}] Using fetch dates -> start: '{fetch_start_date}', end: '{fetch_end_date}'")
 
         df = pd.DataFrame()
         data_points: List[TimeSeriesPoint] = []
@@ -88,29 +122,28 @@ class UnifiedIndicatorService:
         frequency = metadata.frequency
 
         try:
-            # When calling specific services, pass adjusted_start_date and the original end_date
+            # When calling specific services, pass the calculated fetch dates
             if metadata.data_source == DataSourceType.FRED:
-                df = self.fred_service.get_series_data(metadata.series_id, adjusted_start_date, end_date)
+                df = self.fred_service.get_series_data(metadata.series_id, fetch_start_date, fetch_end_date)
                 series_info = self.fred_service.get_series_info(metadata.series_id)
                 title = series_info.get("title", metadata.name) 
                 units = series_info.get("units", metadata.units)
                 frequency = series_info.get("frequency", metadata.frequency)
             elif metadata.data_source == DataSourceType.YAHOO:
-                # --- ADDED DEBUG LOG BEFORE YAHOO CALL ---
-                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling Yahoo with series_id: '{metadata.series_id}', start: '{adjusted_start_date}', end: '{end_date}'")
-                df = self.yahoo_service.get_ticker_data(metadata.series_id, adjusted_start_date, end_date)
+                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling Yahoo with series_id: '{metadata.series_id}', start: '{fetch_start_date}', end: '{fetch_end_date}'")
+                df = self.yahoo_service.get_ticker_data(metadata.series_id, fetch_start_date, fetch_end_date)
             elif metadata.data_source == DataSourceType.DBNOMICS_ISM:
-                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling DBNOMICS_ISM with start: '{adjusted_start_date}', end: '{end_date}'")
+                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling DBNOMICS_ISM with start: '{fetch_start_date}', end: '{fetch_end_date}'")
                 if indicator_id == "ISM-PMI":
-                    df = self.dbnom_service.get_ism_pmi(adjusted_start_date, end_date)
+                    df = self.dbnom_service.get_ism_pmi(fetch_start_date, fetch_end_date)
                 elif indicator_id == "ISM-NEW-ORDERS":
-                    df = self.dbnom_service.get_ism_new_orders(adjusted_start_date, end_date)
+                    df = self.dbnom_service.get_ism_new_orders(fetch_start_date, fetch_end_date)
                 else: 
                     logger.error(f"Unknown indicator ID: {indicator_id} for DataSourceType.DBNOMICS_ISM")
             elif metadata.data_source == DataSourceType.CUSTOM_COMPOSITE:
-                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling CUSTOM_COMPOSITE with start: '{adjusted_start_date}', end: '{end_date}'")
+                logger.info(f"[_fetch_raw_data for {indicator_id}] Calling CUSTOM_COMPOSITE with start: '{fetch_start_date}', end: '{fetch_end_date}'")
                 if indicator_id == "GOLD-COPPER-RATIO":
-                    df = self.composite_service.get_gold_copper_ratio(adjusted_start_date, end_date)
+                    df = self.composite_service.get_gold_copper_ratio(fetch_start_date, fetch_end_date)
                 else:
                     logger.error(f"Unknown CUSTOM_COMPOSITE indicator ID: {indicator_id}")
             else:
@@ -126,16 +159,16 @@ class UnifiedIndicatorService:
         except Exception as e:
             logger.error(f"Error fetching raw data for {indicator_id} from {metadata.data_source}: {e}", exc_info=True)
         
-        logger.info(f"Fetched {len(data_points)} raw data points for {indicator_id}")
+        logger.info(f"Fetched {len(data_points)} raw data points for {indicator_id} (including any buffer data)")
         return data_points, title, units, frequency
 
     def get_indicator(
         self,
         indicator_id: str,
-        start_date: Optional[str] = None, # Parameter from get_enriched_indicators_by_type
-        end_date: Optional[str] = None   # Parameter from get_enriched_indicators_by_type
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> EnrichedIndicatorData:
-        # --- ADDED DEBUG LOG ---
+        
         logger.info(f"[get_indicator for {indicator_id}] Received params -> start_date: '{start_date}', end_date: '{end_date}'")
         
         metadata = get_indicator_metadata(indicator_id)
@@ -147,16 +180,16 @@ class UnifiedIndicatorService:
                 signal_status=SignalStatus.NEUTRAL, description="Metadata not found for this indicator."
             )
 
-        # Pass received start_date and end_date to _fetch_raw_data
+        # Fetch raw data (with buffers included)
         raw_data, title, units, frequency = self._fetch_raw_data(indicator_id, start_date, end_date)
         
+        # Process the data, passing the original start_date for proper trimming
         enriched_data = self.processing_service.process_indicator_data(
-            indicator_id, raw_data, title, units, frequency
+            indicator_id, raw_data, title, units, frequency, start_date
         )
         return enriched_data
 
     def get_all_indicators_metadata(self) -> List[IndicatorMetadataResponse]:
-        # ... (no changes here) ...
         all_indicators_meta = get_all_indicators() 
         response_list = []
         for indicator_id, metadata in all_indicators_meta.items():
@@ -170,7 +203,6 @@ class UnifiedIndicatorService:
         return response_list
 
     def get_categories(self) -> List[CategoryInfo]:
-        # ... (no changes here) ...
         sorted_category_defs = get_sorted_categories() 
         all_indicators_meta = get_all_indicators()   
         category_info_list = []
@@ -190,10 +222,10 @@ class UnifiedIndicatorService:
     def get_enriched_indicators_by_type(
         self,
         indicator_type: IndicatorType,
-        start_date: Optional[str] = None, # Parameter from API endpoint
-        end_date: Optional[str] = None   # Parameter from API endpoint
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> IndicatorsByTypeResponse:
-        # --- ADDED DEBUG LOG ---
+        
         logger.info(f"[get_enriched_indicators_by_type for type '{indicator_type.value}'] Received params -> start_date: '{start_date}', end_date: '{end_date}'")
         
         typed_indicators_meta = get_indicators_by_type(indicator_type) 
@@ -232,7 +264,6 @@ class UnifiedIndicatorService:
         )
 
     def get_indicators_by_category_name(self, category_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[EnrichedIndicatorData]:
-        # ... (no changes here, but ensure it also passes dates correctly if used) ...
         logger.info(f"[get_indicators_by_category_name for '{category_name}'] Received params -> start_date: '{start_date}', end_date: '{end_date}'")
         indicators_meta_dict = {
             ind_id: meta for ind_id, meta in get_all_indicators().items() 
@@ -255,14 +286,9 @@ class UnifiedIndicatorService:
         self,
         indicator_ids: Optional[List[str]] = None
     ) -> MarketStatusResponse:
-        # ... (Market status logic - ensure get_indicator calls here also consider date ranges if needed for consistency, though typically it uses latest signal)
-        # For simplicity, current market status uses get_indicator without specific dates, implying latest data.
-        # If market status should reflect the dashboard's current view range, dates would need to be passed here too.
-        # This part is unchanged for now as the primary issue is with the main data display.
         if indicator_ids is None:
             indicator_ids = list(get_all_indicators().keys())
         bullish_count = 0
-        # ... (rest of the method)
         bearish_count = 0
         neutral_count = 0
         risk_on_count = 0 

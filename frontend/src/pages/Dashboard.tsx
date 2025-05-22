@@ -122,9 +122,6 @@ function Dashboard() {
   const coincidentDateRange = DashboardConfig.getDateRange('4Y'); // Example: 3 years for coincident
   const laggingDateRange = DashboardConfig.getDateRange('4Y'); // Example: 5 years for lagging
 
-
-  const apiInfoChip = "v2 API (Backend Processing)";
-
   return (
     <Container maxWidth="xl">
       <Box sx={{ my: 4 }}>
@@ -209,7 +206,6 @@ function Dashboard() {
               endDate: leadingDateRange.endDate,
               label: leadingDateRange.label
             }}
-            apiInfoChipLabel={apiInfoChip}
           />
         )}
 
@@ -223,7 +219,6 @@ function Dashboard() {
               endDate: coincidentDateRange.endDate,
               label: coincidentDateRange.label
             }}
-            apiInfoChipLabel={apiInfoChip}
           />
         )}
 
@@ -237,7 +232,6 @@ function Dashboard() {
                     endDate: laggingDateRange.endDate,
                     label: laggingDateRange.label
                 }}
-                apiInfoChipLabel={apiInfoChip}
             />
            // Placeholder if no lagging indicators are configured yet by the backend for this type
            // The IndicatorCategoryPage itself will show a message if no indicators are returned.
@@ -249,7 +243,7 @@ function Dashboard() {
           <strong>Data Sources:</strong> Federal Reserve Economic Data (FRED), ISM, DBNomics, Yahoo Finance
         </Typography>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-          <strong>Backend Processing:</strong> All transformations, signals, and calculations performed server-side (v2 API)
+          <strong>Backend Processing:</strong> All transformations, signals, and calculations performed server-side
         </Typography>
         <Typography variant="caption" color="text.secondary" display="block">
           <strong>Dashboard loaded:</strong> {new Date().toLocaleString()}

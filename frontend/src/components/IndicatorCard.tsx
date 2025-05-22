@@ -64,6 +64,14 @@ const formatDateDutch = (date: Date): string => {
   });
 };
 
+// Y-axis formatter function
+const formatYAxisValue = (value: number): string => {
+  if (typeof value !== 'number' || isNaN(value)) return '';
+  
+  // Format to max 3 decimal places, removing trailing zeros
+  return Number(value.toFixed(3)).toString();
+};
+
 const CustomTooltipContent: React.FC<TooltipProps<ValueType, NameType> & { indicatorTitle: string, indicatorUnits?: string, maLabel?: string }> = ({ active, payload, indicatorTitle, indicatorUnits, maLabel }) => {
   if (active && payload && payload.length) {
     const dataPoint = payload[0].payload as { timestamp: number; originalDate: Date; value: number; maValue?: number }; 
@@ -341,7 +349,8 @@ const IndicatorCard: React.FC<IndicatorCardProps> = ({
                     domain={yAxisDomain}
                     allowDataOverflow={false}
                     tick={{ fontSize: 10 }}
-                    width={45} 
+                    width={45}
+                    tickFormatter={formatYAxisValue}
                 />
                 <Tooltip
                   content={<CustomTooltipContent indicatorTitle={indicator.title} indicatorUnits={indicator.units} maLabel={maLabel}/>}
